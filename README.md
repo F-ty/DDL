@@ -1,78 +1,86 @@
-# ITFD
+# DDL: A Dual Disentanglement Learning Framework with Intent-Aware Multimodal Fusion for Interactive Image Retrieval
 
-ITFD 是一个用于组合图像检索（Composed Image Retrieval, CIR）的模型实现。CIR 的查询由参考图像和修改文本组成，目标是在候选图像库中检索符合修改要求的目标图像。
+This repository provides the implementation of **DDL**, a **Dual Disentanglement Learning** framework with intent-aware multimodal fusion for **Interactive Image Retrieval (IIR)**.
 
-一个样本可表示为：
+Interactive Image Retrieval uses a reference image and feedback text to retrieve a target image from a candidate gallery. This setting is widely used in applications such as security monitoring and intelligent e-commerce, where users iteratively refine visual search results through natural-language feedback.
+
+In this task, a query sample can be represented as:
 
 ```text
-<reference image Ir, modification text Tm, target image It>
+<reference image Ir, feedback text T, target image It>
 ```
 
-例如，参考图像是一件黑色短裙，修改文本为“改成更长的白色裙子”，模型需要保留“裙子”等共同属性，弱化或去除“黑色、短”等参考属性，并加入“白色、长”等目标属性。ITFD 的目标是在 CLIP 公共特征空间中生成组合查询特征 `Fq`，使其接近目标图像特征 `Ft`。
+For example, if the reference image is a black short dress and the feedback text says "make it longer and white", the model should retain common semantics such as "dress", suppress or remove outdated reference attributes such as "black" and "short", and add target-oriented semantics such as "white" and "longer". DDL aims to generate a composed query feature `Fq` in the CLIP feature space so that it is close to the target image feature `Ft`.
 
-## 方法概述
+## Abstract
 
-常规 CIR 方法通常直接融合完整参考图像特征和修改文本特征：
+Interactive Image Retrieval (IIR) integrates reference images and feedback text to retrieve target images. Existing methods often fuse image and text features directly, introducing irrelevant information and limiting retrieval accuracy. To overcome this limitation, we propose **DDL**, a Dual Disentanglement Learning framework with intent-aware multimodal fusion for IIR. Specifically, a **Text Semantic Disentanglement Module (TSDM)** decomposes text into deletion, retention, and addition features, enabling precise semantic extraction. Then, a **Text-Guided Image Disentanglement Module (TGIDM)** selectively isolates target-aligned visual features from the reference image under text guidance. This dual disentanglement ensures that only intention-aware features undergo adaptive fusion. Finally, a multi-objective joint loss function is constructed to achieve more semantically aligned retrieval.
+
+## Method Overview
+
+Conventional IIR/CIR methods usually fuse the complete reference image feature and the complete feedback text feature directly:
 
 ```text
-Fq = Fusion(Fr, Fm)
+Fq = Fusion(Fr, Ftext)
 ```
 
-这种方式可能把参考图像中应被删除的属性继续保留到查询特征中。例如文本要求“白色衬衫改成红色”时，直接融合可能仍保留“白色”特征。
+This strategy may preserve irrelevant or conflicting information from the reference image. For example, when the text asks to change a white shirt to red, direct fusion may still keep the "white" visual semantics in the final query.
 
-ITFD 的核心思想是：
+DDL follows a dual disentanglement strategy:
 
 ```text
-先解耦，再融合，最后进行目标图像匹配。
+disentangle text semantics, disentangle reference image features under text guidance,
+then perform intent-aware multimodal fusion for target image matching.
 ```
 
-整体上，模型希望从修改文本中区分删除、保留、添加语义，并从参考图像中提取需要保留到目标图像中的视觉信息。最终用于检索的主要是：
+The framework first separates feedback text into deletion, retention, and addition semantics through TSDM. It then uses the retention semantics to guide TGIDM, isolating target-aligned visual features from the reference image. The final retrieval query mainly combines:
 
 ```text
-参考图像保留特征 + 文本添加特征
+reference-image retained visual features + feedback-text addition features
 ```
 
-## 数据流
+## Data Flow
 
-本实现的主要数据流如下：
+The main data flow of this implementation is:
 
 ```text
-参考图像 Ir
+Reference image Ir
   -> CLIP image encoder
-  -> 参考图像特征 Fr
+  -> Reference image feature Fr
 
-目标图像 It
+Target image It
   -> CLIP image encoder
-  -> 目标图像特征 Ft
+  -> Target image feature Ft
 
-参考图像描述 + 修改文本
+Reference caption + feedback text
   -> CLIP text encoder
-  -> 增强修改文本特征 Fm
+  -> Enhanced feedback text feature Fm
 
 Fm
-  -> 文本语义解耦
-  -> 删除掩码 / 保留掩码 / 添加掩码
+  -> Text Semantic Disentanglement Module (TSDM)
+  -> deletion mask / retention mask / addition mask
 
-保留掩码 + Fr
-  -> 文本条件化图像保留特征 Fr-prs
+Retention mask + Fr
+  -> Text-Guided Image Disentanglement Module (TGIDM)
+  -> Text-guided retained reference feature Fr-prs
 
-添加掩码 + Fm
-  -> 文本添加特征 Fm-add
+Addition mask + Fm
+  -> Text addition feature Fm-add
 
 Fm-add + Fr-prs
-  -> 自适应动态融合
-  -> 组合查询特征 Fq
+  -> intent-aware adaptive multimodal fusion
+  -> Composed query feature Fq
 
-Fq 与 Ft
-  -> 批次级对比学习和检索评测
+Fq and Ft
+  -> batch-level contrastive learning and retrieval evaluation
 ```
 
-核心伪代码：
+Core pseudo-code:
 
 ```python
 ref = normalize(CLIP_image(reference_image))
 target = normalize(CLIP_image(target_image))
-text = normalize(CLIP_text(reference_caption + ", but " + modification_text))
+text = normalize(CLIP_text(reference_caption + ", but " + feedback_text))
 
 delete_mask = sigmoid(FC_delete(text))
 preserve_mask = sigmoid(FC_preserve(text))
@@ -97,71 +105,71 @@ preserve_loss = mean(1 - cosine(preserved_ref, preserved_target))
 total_loss = ranking_loss + alpha * triplet_loss + beta * preserve_loss
 ```
 
-## 编码器
+## Encoder
 
-本项目使用 OpenCLIP 作为统一图文编码器：
+This project uses OpenCLIP as the unified image-text encoder:
 
 ```python
 open_clip.create_model_and_transforms(args.backbone, pretrained=args.pt_path)
 ```
 
-图像编码：
+Image encoding:
 
 ```python
 self.clip.encode_image(x)
 ```
 
-文本编码：
+Text encoding:
 
 ```python
 self.tokenizer(txt)
 self.clip.encode_text(txt)
 ```
 
-图像、文本和查询特征均使用 L2 归一化，因此检索时可以用点积计算余弦相似度。
+Image, text, and query features are all L2-normalized, so retrieval can use dot product as cosine similarity.
 
-训练脚本支持的骨干网络配置包括：
+Supported backbone configurations in the training scripts include:
 
 ```text
 ViT-B-32: hidden_dim = 512
 ViT-H-14: hidden_dim = 1024
-RN50 或其他分支: hidden_dim 通常按 512 配置
+RN50 or other branches: hidden_dim is usually set to 512
 ```
 
-训练默认使用两组学习率：
+The default training setup uses two learning rates:
 
 ```text
-CLIP 编码器: 1e-6
-ITFD 新增模块: 1e-4
+CLIP encoder: 1e-6
+DDL newly added modules: 1e-4
 ```
 
-## 文本构造
+## Feedback Text Construction
 
-原始修改文本通常只描述变化，缺少参考图像完整语义。例如：
+The original feedback text usually describes only the desired change and lacks the full semantics of the reference image. For example:
 
 ```text
 is longer and white instead of black
 ```
 
-因此数据集代码会把参考图像描述和修改文本拼接为增强文本：
+Therefore, the dataset code concatenates the reference caption and feedback text into an enhanced text query:
 
 ```text
 a woman in black one shoulder dress, but is longer and white instead of black
 ```
 
-在本实现中，`textual_query` 通常不是单独的原始修改文本，而是：
+In this implementation, `textual_query` is usually not the raw feedback text alone, but:
 
 ```text
-reference caption + ", but " + modification text
+reference caption + ", but " + feedback text
 ```
 
-FashionIQ 和 Shoes 使用预生成参考图像描述补充修改文本；Fashion200K 会根据参考图像描述和目标图像描述之间的词差异构造类似 `replace black with blue` 的修改文本，并在评测中拼接参考描述。
+FashionIQ and Shoes use pre-generated reference captions to enrich feedback text. Fashion200K constructs feedback text such as `replace black with blue` from word differences between reference and target captions, and concatenates the reference caption during evaluation.
 
-## 模型模块
+## Model Modules
 
-### 文本语义解耦
+### Text Semantic Disentanglement Module (TSDM)
 
-`src/model.py` 中使用三个独立线性映射和 Sigmoid 生成逐维掩码：
+In `src/model.py`, three independent linear projections followed by Sigmoid generate element-wise masks:
 
 ```python
 self.del_proj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid())
@@ -169,41 +177,41 @@ self.prs_proj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid())
 self.new_proj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Sigmoid())
 ```
 
-对应语义为：
+Their semantics are:
 
 ```text
-del_mask: 删除语义，例如 black、short、long sleeves
-prs_mask: 保留语义，例如 dress、shirt、shoe
-new_mask: 添加语义，例如 white、longer、with buckle
+del_mask: deletion semantics, such as black, short, long sleeves
+prs_mask: retention semantics, such as dress, shirt, shoe
+new_mask: addition semantics, such as white, longer, with buckle
 ```
 
-主查询分支使用：
+The main query branch uses:
 
 ```text
 new_text = normalize(new_mask * textual_query)
 prs_ref = normalize(prs_mask * visual_query)
 ```
 
-`del_mask` 主要通过三元组损失参与训练，`prs_mask` 用于提取参考图像和目标图像中的保留部分，`new_mask` 用于得到添加文本特征。
+`del_mask` is mainly optimized through the triplet loss. `prs_mask` is used to extract retained features from both reference and target images. `new_mask` is used to obtain the addition text feature.
 
-### 文本引导的图像保留特征提取
+### Text-Guided Image Disentanglement Module (TGIDM)
 
-文本生成的保留掩码作用于 CLIP 图像全局特征，用于提取参考图像中需要保留到目标图像中的视觉信息：
+The retention mask generated by TSDM is applied to the global CLIP image feature. This extracts the visual information in the reference image that should be retained in the target image under feedback-text guidance:
 
 ```python
 prs_ref = F.normalize(prs_mask * visual_query, p=2, dim=-1)
 ```
 
-### 自适应动态图文融合
+### Intent-Aware Adaptive Multimodal Fusion
 
-参与融合的特征包括：
+The features used for fusion are:
 
 ```text
-new_text: 添加文本特征
-prs_ref: 参考图像保留特征
+new_text: addition text feature
+prs_ref: retained reference image feature
 ```
 
-模型先拼接两者，再预测动态权重：
+The model first concatenates the two features and then predicts a dynamic fusion weight:
 
 ```python
 combined_feature = self.combiner_fc(torch.cat([new_text, prs_ref], dim=-1))
@@ -212,57 +220,57 @@ query = dynamic_scaler * new_text + (1 - dynamic_scaler) * prs_ref
 query = F.normalize(query, p=2, dim=-1)
 ```
 
-在本实现中，`dynamic_scaler` 乘在 `new_text` 上，因此对应文本添加特征的权重。
+In this implementation, `dynamic_scaler` is multiplied with `new_text`, so it corresponds to the weight of the addition text feature.
 
-## 损失函数
+## Loss Function
 
-总体损失由三部分组成：
+The overall loss consists of three terms:
 
 ```text
 L = Lranking + alpha * Ltrip + beta * Lcos
 ```
 
-### 检索排序损失
+### Retrieval Ranking Loss
 
-查询特征与 batch 内目标图像特征计算相似度矩阵：
+The query feature and in-batch target image features are used to compute a similarity matrix:
 
 ```python
 x = torch.mm(query, target.t())
 ```
 
-对于 batch size 为 `B` 的批次，标签为：
+For a batch size of `B`, the labels are:
 
 ```python
 labels = [0, 1, 2, ..., B-1]
 ```
 
-模型使用交叉熵进行批次级对比学习：
+The model uses cross-entropy for batch-level contrastive learning:
 
 ```python
 loss = F.cross_entropy(self.loss_weight * x, labels)
 ```
 
-其中 `loss_weight` 是可学习相似度缩放参数，初始值为 10。
+Here, `loss_weight` is a learnable similarity scaling parameter initialized to 10.
 
-### 文本解耦三元组损失
+### Text Disentanglement Triplet Loss
 
-删除文本特征应更接近参考图像并远离目标图像：
+The deletion text feature should be closer to the reference image and farther from the target image:
 
 ```python
 con1 = self.trip(del_text, ref, target)
 ```
 
-添加文本特征应更接近目标图像并远离参考图像：
+The addition text feature should be closer to the target image and farther from the reference image:
 
 ```python
 con2 = self.trip(new_text, target, ref)
 ```
 
-三元组损失 margin 为 1.0。
+The triplet loss margin is 1.0.
 
-### 保留特征余弦损失
+### Retention Feature Cosine Loss
 
-相同保留掩码会分别施加到参考图像和目标图像特征上：
+The same retention mask is applied to both reference and target image features:
 
 ```python
 prs_ref = normalize(prs_mask * ref)
@@ -270,66 +278,66 @@ prs_tar = normalize(prs_mask * target)
 loss3 = mean(1.0 - cosine_similarity(prs_ref, prs_tar))
 ```
 
-该损失鼓励参考图像和目标图像的保留属性在特征空间中一致。
+This loss encourages retained attributes in the reference and target images to be aligned in the feature space.
 
-### 损失权重
+### Loss Weights
 
-`ITFD_GitHub/src/model.py` 中的默认损失为：
+The default loss in `src/model.py` is:
 
 ```python
 return loss + 0.2 * loss2 + 0.7 * loss3
 ```
 
-对应默认配置为：
+The corresponding default configuration is:
 
 ```text
 alpha = 0.2
 beta = 0.7
 ```
 
-`alpha` 和 `beta` 是辅助损失的超参数，可按数据集调整。实验中可在 `0.1` 到 `1.0` 之间按一位小数搜索，例如 `0.1, 0.2, ..., 1.0`。不同数据集的最优权重可能不同，复现实验时应记录 `src/model.py`、训练命令和日志中的实际参数。
+`alpha` and `beta` are hyperparameters for the auxiliary losses and can be adjusted by dataset. In experiments, they can be searched from `0.1` to `1.0` with one decimal place, such as `0.1, 0.2, ..., 1.0`. The optimal weights may differ across datasets. For reproducibility, record the actual `src/model.py`, training command, and logs used for each run.
 
-## 复现说明
+## Reproducibility Notes
 
-复现实验时应保持以下配置一致：
+To reproduce experiments, keep the following configuration details consistent:
 
-1. `dynamic_scaler` 对应文本添加特征权重。
-2. 损失权重 `alpha` 和 `beta` 默认为 `alpha=0.2, beta=0.7`，不同数据集可使用不同配置。
-3. 对比实验需记录数据集划分、backbone、损失权重、checkpoint 和训练日志。
+1. `dynamic_scaler` corresponds to the weight of the addition text feature.
+2. The default loss weights are `alpha=0.2` and `beta=0.7`; different datasets may use different configurations.
+3. Comparative experiments should record the dataset split, backbone, loss weights, checkpoint, and training logs.
 
-## 代码结构
+## Repository Structure
 
 ```text
 ITFD_GitHub/
 ├── src/
-│   ├── model.py       # ITFD 模型、CLIP 编码、掩码解耦、动态融合、损失
-│   ├── datasets.py    # FashionIQ、Shoes、Fashion200K 数据读取和文本构造
-│   ├── train.py       # 参数解析、训练、验证、checkpoint 保存
-│   ├── eval.py        # checkpoint 加载和评测入口
-│   ├── test.py        # Recall 计算和检索评测逻辑
-│   └── utils.py       # 日志、JSON、checkpoint 工具
-├── tools/             # ITFD 效率 profiling
-├── data/              # 数据集和 OpenCLIP 预训练权重
-├── scripts/           # 根目录可运行脚本
+│   ├── model.py       # DDL implementation, CLIP encoding, dual disentanglement, intent-aware fusion, loss
+│   ├── datasets.py    # FashionIQ, Shoes, and Fashion200K data loading and text construction
+│   ├── train.py       # Argument parsing, training, validation, and checkpoint saving
+│   ├── eval.py        # Checkpoint loading and evaluation entry point
+│   ├── test.py        # Recall computation and retrieval evaluation logic
+│   └── utils.py       # Logging, JSON, and checkpoint utilities
+├── tools/             # DDL efficiency profiling
+├── data/              # Datasets and OpenCLIP pretrained weights
+├── scripts/           # Runnable scripts from the repository root
 └── requirements.txt
 ```
 
-## 环境
+## Environment
 
-推荐环境为 Python 3.8 和 PyTorch。一个典型 CUDA 环境如下：
+Python 3.8 and PyTorch are recommended. A typical CUDA environment is:
 
 ```bash
-conda create -n itfd python=3.8 -y
-conda activate itfd
+conda create -n ddl python=3.8 -y
+conda activate ddl
 pip install torch==2.3.1 torchvision==0.18.1 --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
-CUDA 版本不同时，请先安装匹配的 PyTorch 版本，再安装 `requirements.txt`。
+If your CUDA version differs, install the matching PyTorch version first, then install `requirements.txt`.
 
-## 数据
+## Data
 
-数据目录布局如下：
+The expected data directory layout is:
 
 ```text
 data/
@@ -349,18 +357,18 @@ data/
     └── CLIP-ViT-B-32-laion2B-s34B-b79K/open_clip_pytorch_model.bin
 ```
 
-数据和预训练权重包含大文件。需要发布这些文件时，可使用 Git LFS：
+Datasets and pretrained weights contain large files. If these files need to be released, Git LFS can be used:
 
 ```bash
 git lfs install
 git lfs track "*.bin" "*.pt" "*.pth" "*.jpg" "*.jpeg" "*.png"
 ```
 
-`.gitattributes` 已包含这些规则。
+The `.gitattributes` file already contains these rules.
 
-## 训练
+## Training
 
-从仓库根目录运行：
+Run from the repository root:
 
 ```bash
 bash scripts/train.sh dress
@@ -370,7 +378,7 @@ bash scripts/train.sh shoes
 bash scripts/train.sh fashion200k
 ```
 
-脚本默认配置：
+Default script configuration:
 
 ```text
 backbone: ViT-B-32
@@ -379,7 +387,7 @@ num_workers: 6
 output: outputs/<dataset>/ViT-B-32/
 ```
 
-等价直接命令：
+Equivalent direct command:
 
 ```bash
 python src/train.py \
@@ -392,25 +400,25 @@ python src/train.py \
   --model_dir outputs/dress/ViT-B-32
 ```
 
-训练时每个 batch 的字段含义：
+Fields in each training batch:
 
 ```text
-visual_query: 参考图像
-textual_query: 参考图像描述 + ", but " + 修改文本
-target_img_data: 目标图像
+visual_query: reference image
+textual_query: reference caption + ", but " + feedback text
+target_img_data: target image
 ```
 
-`train.py` 会将 CLIP 参数和新增模块参数分成不同学习率的参数组，并使用 AdamW 和混合精度训练。
+`train.py` separates CLIP parameters and newly added module parameters into different learning-rate groups, and trains with AdamW and mixed precision.
 
-## 评测
+## Evaluation
 
-将 ITFD checkpoint 放入 `checkpoints/` 后运行：
+Place the DDL checkpoint in `checkpoints/` and run:
 
 ```bash
 bash scripts/eval.sh dress checkpoints/dress_0_best_model.pt
 ```
 
-直接命令：
+Direct command:
 
 ```bash
 python src/eval.py \
@@ -423,7 +431,7 @@ python src/eval.py \
   --ckpt checkpoints/dress_0_best_model.pt
 ```
 
-FashionIQ 和 Shoes 主要输出：
+FashionIQ and Shoes mainly report:
 
 ```text
 Recall@1
@@ -431,44 +439,46 @@ Recall@10
 Recall@50
 ```
 
-Fashion200K 评测会先编码所有候选图像，再计算查询与候选图像的相似度并排序。复现实验时应保存完整命令、checkpoint、日志和实际 `model.py` 损失权重。
+Fashion200K evaluation first encodes all candidate images, then ranks candidates by similarity to each query. For reproducibility, save the full command, checkpoint, logs, and the actual loss weights used in `model.py`.
 
-## 效率 Profiling
+## Efficiency Profiling
 
 ```bash
 python tools/profile_itfd_efficiency_full.py \
   --dataset dress \
   --checkpoint checkpoints/dress_0_best_model.pt \
-  --output_json outputs/efficiency/itfd_dress.json \
-  --output_csv outputs/efficiency/itfd_dress.csv
+  --output_json outputs/efficiency/ddl_dress.json \
+  --output_csv outputs/efficiency/ddl_dress.csv
 ```
 
-## 实验结果
+The profiling script name currently retains an earlier implementation name. Use the file name that exists in this repository as the runnable entry point.
 
-论文报告的主要结果包括：
+## Experimental Results
+
+The experiments show that DDL achieves new state-of-the-art performance on multiple IIR benchmark datasets, especially on the `R@10` and `R@50` metrics, and demonstrates strong robustness.
 
 ```text
-FashionIQ average Recall: 66.21
-Shoes average Recall: 74.70
-Fashion200K average Recall: 67.09
+Primary metrics: Recall@10, Recall@50
+Main conclusion: DDL achieves new state-of-the-art retrieval performance and robust results.
 ```
 
-消融实验显示，同时使用文本语义解耦、图像特征解耦、动态融合和辅助解耦损失时效果最好。复现实验应以实际运行配置和日志为准。
+Ablation studies show that the best performance is obtained when TSDM, TGIDM, intent-aware adaptive fusion, and the multi-objective joint loss are used together. Reproducibility should be based on the actual run configuration, checkpoint, and logs.
 
-## 开发与扩展
+## Development and Extension
 
-扩展模型或添加新实验时，主要涉及以下模块：
+When extending the model or adding new experiments, the main modules are:
 
-1. `src/datasets.py`：数据读取、文本构造、字段定义和张量组织。
-2. `src/model.py`：查询特征提取、文本语义解耦、动态图文融合和损失函数。
-3. `src/train.py`：训练参数、优化器、学习率设置和 checkpoint 保存。
-4. `src/eval.py` 与 `src/test.py`：checkpoint 加载、候选图像编码和检索指标计算。
+1. `src/datasets.py`: data loading, text construction, field definitions, and tensor organization.
+2. `src/model.py`: query feature extraction, text semantic disentanglement, text-guided image disentanglement, intent-aware fusion, and loss functions.
+3. `src/train.py`: training arguments, optimizer, learning-rate settings, and checkpoint saving.
+4. `src/eval.py` and `src/test.py`: checkpoint loading, candidate image encoding, and retrieval metric computation.
 
-更换 backbone 时需同步设置 `hidden_dim`。调整损失权重或融合结构时，应记录对应的数据集、训练命令、checkpoint 和日志，确保实验结果可追踪。
+When changing the backbone, update `hidden_dim` accordingly. When adjusting loss weights or the fusion structure, record the dataset, training command, checkpoint, and logs to keep experiments traceable.
 
-## 仓库说明
+## Repository Notes
 
-- `src/exp/` 未包含在发布包中，其中通常包含大量实验输出和 checkpoint。
-- `checkpoints/` 和 `outputs/` 不作为空目录保留；训练和 profiling 会按需生成输出目录，评测时可将 checkpoint 放入 `checkpoints/` 或传入自定义路径。
-- 辅助可视化、调试和样例挑选脚本不作为核心训练评测入口。
-- 数据集、预训练权重、训练日志、输出结果和模型 checkpoint 通常不直接提交到 Git 仓库；如需发布大文件，建议使用 Git LFS。
+- `src/exp/` is not included in the release package because it usually contains many experiment outputs and checkpoints.
+- The class name in `src/model.py` is currently kept as `ITFD` for compatibility with existing training and evaluation code; the README and paper method name are standardized as DDL.
+- `checkpoints/` and `outputs/` are not preserved as empty directories. Training and profiling create output directories as needed. For evaluation, place checkpoints in `checkpoints/` or pass a custom checkpoint path.
+- Auxiliary visualization, debugging, and sample selection scripts are not part of the core training and evaluation entry points.
+- Datasets, pretrained weights, training logs, output results, and model checkpoints are usually not committed directly to the Git repository. Use Git LFS if large files need to be released.
