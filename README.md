@@ -308,7 +308,7 @@ To reproduce experiments, keep the following configuration details consistent:
 ## Repository Structure
 
 ```text
-ITFD_GitHub/
+DDL_GitHub/
 ├── src/
 │   ├── model.py       # DDL implementation, CLIP encoding, dual disentanglement, intent-aware fusion, loss
 │   ├── datasets.py    # FashionIQ, Shoes, and Fashion200K data loading and text construction
@@ -444,7 +444,7 @@ Fashion200K evaluation first encodes all candidate images, then ranks candidates
 ## Efficiency Profiling
 
 ```bash
-python tools/profile_itfd_efficiency_full.py \
+python tools/profile_DDL_efficiency_full.py \
   --dataset dress \
   --checkpoint checkpoints/dress_0_best_model.pt \
   --output_json outputs/efficiency/ddl_dress.json \
@@ -478,7 +478,7 @@ When changing the backbone, update `hidden_dim` accordingly. When adjusting loss
 ## Repository Notes
 
 - `src/exp/` is not included in the release package because it usually contains many experiment outputs and checkpoints.
-- The class name in `src/model.py` is currently kept as `ITFD` for compatibility with existing training and evaluation code; the README and paper method name are standardized as DDL.
+- The class name in `src/model.py` is currently kept as `DDL` for compatibility with existing training and evaluation code; the README and paper method name are standardized as DDL.
 - `checkpoints/` and `outputs/` are not preserved as empty directories. Training and profiling create output directories as needed. For evaluation, place checkpoints in `checkpoints/` or pass a custom checkpoint path.
 - Auxiliary visualization, debugging, and sample selection scripts are not part of the core training and evaluation entry points.
 - Datasets, pretrained weights, training logs, output results, and model checkpoints are usually not committed directly to the Git repository. Use Git LFS if large files need to be released.
