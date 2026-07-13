@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import open_clip
 import math
 
-class ITFD(nn.Module):
+class DDL(nn.Module):
     def __init__(self, args, hidden_dim=1024, dropout = 0.5):
         super().__init__()
         self.clip, _, _ = open_clip.create_model_and_transforms(args.backbone, pretrained=args.pt_path)
